@@ -1,0 +1,166 @@
+name: Deploy Prod
+
+on:
+  workflow_dispatch:
+
+env:
+  ECR_REPO_NAME: # to be set on initial infra provision
+  TERRAFORM_ROOT: ./terraform/prod
+  NODE_VERSION: 18
+  DOCKER_ENV: production
+
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  TF_VAR_docker_image_tag: ${{ github.sha }}
+
+  # UNCOMMENT FOR DATABASE (1 of 5)
+  # TF_VAR_db_password: this_should_be_loaded_from_secrets_12345
+
+jobs:
+  # only provision the ECR initially so we have somewhere to push the image to
+  pre_deployment:
+    name: Provision ECR
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@master
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-2
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Terraform Fmt
+        id: fmt
+        run: terraform fmt -check -diff
+        working-directory: ${{env.TERRAFORM_ROOT}}
+
+      - name: Terraform Init
+        id: init
+        run: terraform init
+        working-directory: ${{env.TERRAFORM_ROOT}}
+
+      - name: Terraform Validate
+        id: validate
+        run: terraform validate
+        working-directory: ${{env.TERRAFORM_ROOT}}
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: ${{env.TERRAFORM_ROOT}}
+        run: |
+          terraform plan \
+          -target=module.app_infra.aws_ecr_repository.application_ecr_repo \
+          -out ./app.out
+
+      - name: Create ECR repo
+        id: apply
+        run: terraform apply -auto-approve ./app.out
+        working-directory: ${{env.TERRAFORM_ROOT}}
+
+  next_build:
+    name: Build Next.js app
+    needs: pre_deployment
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@master
+
+      - uses: actions/setup-node@v3
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-2
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.1.8
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        id: init
+        run: terraform init
+        working-directory: ${{env.TERRAFORM_ROOT}}
+
+      - name: Output terraform variables to file
+        id: output
+        working-directory: ${{env.TERRAFORM_ROOT}}
+        run: |
+          terraform output -json > ../../terraform-outputs.json
+
+      # use terraform outputs to set workflow variables from terraform outputs
+      - name: Set variables from Terraform Outputs
+        run: |
+          outputs=$(cat terraform-outputs.json)
+
+          ecr_repo_name=$(echo $outputs | jq -r .ecr_repo_name.value)
+          echo "ECR_REPO_NAME=$ecr_repo_name" >> $GITHUB_ENV
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build, tag, and push image to Amazon ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ env.ECR_REPO_NAME }}
+          IMAGE_TAG: ${{ env.TF_VAR_docker_image_tag }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+  deploy:
+    name: Deploy infra & app
+    needs: next_build
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@master
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-2
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Terraform Fmt
+        id: fmt
+        run: terraform fmt -check -diff
+        working-directory: ${{env.TERRAFORM_ROOT}}
+
+      - name: Terraform Init
+        id: init
+        run: terraform init
+        working-directory: ${{env.TERRAFORM_ROOT}}
+
+      - name: Terraform Validate
+        id: validate
+        run: terraform validate
+        working-directory: ${{env.TERRAFORM_ROOT}}
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: ${{env.TERRAFORM_ROOT}}
+        run: |
+          terraform plan \
+          -out ./app.out
+
+      - name: Terraform Apply
+        id: apply
+        run: terraform apply ./app.out
+        working-directory: ${{env.TERRAFORM_ROOT}}
