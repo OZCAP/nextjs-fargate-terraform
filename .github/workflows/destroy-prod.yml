@@ -1,0 +1,47 @@
+name: Destroy all infrastructure
+
+on:
+    workflow_dispatch:
+
+env:
+    TERRAFORM_ROOT: ./terraform/prod
+    TF_VAR_docker_image_tag: ${{ github.sha }}
+    AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+    AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+jobs:
+    destroy:
+        name: Destroy Infrastructure
+        runs-on: ubuntu-20.04
+        steps:
+            - name: Checkout Repository
+              uses: actions/checkout@master
+
+            - name: Configure AWS Credentials
+              uses: aws-actions/configure-aws-credentials@v1
+              with:
+                  aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+                  aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+                  aws-region: eu-west-2
+
+            - name: Setup Terraform
+              uses: hashicorp/setup-terraform@v1
+              with:
+                  terraform_version: 1.1.8
+                  terraform_wrapper: false
+
+            - name: Terraform Init
+              id: init
+              run: terraform init
+              working-directory: ${{ env.TERRAFORM_ROOT }}
+
+            - name: Destroy Terraform Infrastructure
+              run: terraform destroy -input=false -auto-approve
+              working-directory: ${{ env.TERRAFORM_ROOT }}
+
+            - name: Cleanup State (Optional)
+              if: always()
+              run: |
+                  # This step can be used to cleanup or perform any post-destroy operations, like removing state files.
+                  # Just a placeholder, you can leave it out if not necessary.
+                  echo "Cleanup after destroying infrastructure."

@@ -1,4 +1,4 @@
-name: Deploy Prod
+name: Deploy prod
 
 on:
   workflow_dispatch:
@@ -34,11 +34,6 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
-
-      - name: Terraform Fmt
-        id: fmt
-        run: terraform fmt -check -diff
-        working-directory: ${{env.TERRAFORM_ROOT}}
 
       - name: Terraform Init
         id: init
@@ -117,7 +112,9 @@ jobs:
           ECR_REPOSITORY: ${{ env.ECR_REPO_NAME }}
           IMAGE_TAG: ${{ env.TF_VAR_docker_image_tag }}
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker build \
+          --build-arg NODE_ENV=${{ env.DOCKER_ENV }} \
+          -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
   deploy:
@@ -137,11 +134,6 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
-
-      - name: Terraform Fmt
-        id: fmt
-        run: terraform fmt -check -diff
-        working-directory: ${{env.TERRAFORM_ROOT}}
 
       - name: Terraform Init
         id: init

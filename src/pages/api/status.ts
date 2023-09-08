@@ -1,8 +1,9 @@
-import type { NextApiRequest, NextApiResponse } from 'next'
+import type { NextApiRequest, NextApiResponse } from "next";
 
-export default function handler(
-  _req: NextApiRequest,
-  res: NextApiResponse
-) {
-  res.status(200).json({ result: 'OK' })
-}
+const handler = (_req: NextApiRequest, res: NextApiResponse) => {
+  return res.status(200).send({
+    message: "OK"
+  });
+};
+
+export default handler;
